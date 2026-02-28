@@ -1,4 +1,4 @@
-﻿# openclaw-skills/manifest.yml
+# openclaw-skills/manifest.yml
 # 在新裝置上依此清單執行 clawhub install <slug>
 skills:
   - slug: summarize
@@ -11,4 +11,6 @@ skills:
     source: clawhub
     note: "需要額外安裝 gog CLI"
   - slug: excel-automation
+    source: clawhub
+  - slug: pdf-text-extractor
     source: clawhub
