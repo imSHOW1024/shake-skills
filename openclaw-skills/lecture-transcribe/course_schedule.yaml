@@ -1,0 +1,50 @@
+# ============================================================
+# EMBA 114學年下學期 課表設定
+# 用途: 根據錄音日期/時間自動推斷課程名稱與教授
+# 位置: ~/openclaw-skills/lecture-transcribe/course_schedule.yaml
+# ============================================================
+
+semester: "114-2"
+
+courses:
+  - day: 4          # 週四
+    start: "18:45"
+    end: "20:15"
+    name: "跨文化交流與研習"
+    professor: "李明彥"
+    room: "商學201"
+
+  - day: 5          # 週五
+    start: "18:45"
+    end: "20:15"
+    name: "企業危機管理"
+    professor: "鄭詠隆"
+    room: "管理321"
+
+  - day: 6          # 週六
+    start: "09:10"
+    end: "11:00"
+    name: "企業研究方法"
+    professor: "顧志遠"
+    room: "商學202"
+
+  - day: 6
+    start: "11:10"
+    end: "13:00"
+    name: "全球台商個案研討"
+    professor: "林震岩"
+    room: "商學202"
+
+  - day: 6
+    start: "14:10"
+    end: "16:00"
+    name: "消費者行為"
+    professor: "陳蔡逸"
+    room: "商學201"
+
+  - day: 6
+    start: "16:10"
+    end: "18:00"
+    name: "科技與人文講座"
+    professor: "易青雲"
+    room: "商學205"

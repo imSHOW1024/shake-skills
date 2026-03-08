@@ -1,0 +1,76 @@
+# ============================================================
+# OpenClaw Skill: lecture-transcribe
+# 觸發: Telegram Bot 收到語音/音訊檔案
+# ============================================================
+#
+# 目錄結構 (放在 ~/openclaw-skills/lecture-transcribe/):
+#
+#   lecture-transcribe/
+#   ├── skill.yaml              ← 本檔 (技能定義)
+#   ├── lecture_pipeline.py     ← 主邏輯
+#   ├── course_schedule.yaml    ← EMBA 課表
+#   └── requirements.txt        ← Python 依賴
+#
+# ============================================================
+
+name: lecture-transcribe
+description: |
+  EMBA 課堂錄音自動轉錄。
+  收到音訊檔 → WhisperX 轉錄 + Diarization → 辨識主講者 →
+  互動補充 metadata → Markdown 輸出 → 上傳 Notion 課堂摘要庫。
+
+trigger:
+  type: telegram_audio
+  # 觸發條件: 收到語音訊息或音訊檔案
+  file_types:
+    - audio/mpeg        # mp3
+    - audio/mp4         # m4a
+    - audio/ogg         # ogg (Telegram voice message)
+    - audio/wav
+    - audio/flac
+    - audio/x-m4a
+    - video/mp4         # 有時錄影檔也需要轉錄
+
+env_required:
+  - HF_TOKEN           # HuggingFace (pyannote diarization)
+  - NOTION_TOKEN       # Notion API
+
+python_env: ~/whisperx-env
+# 使用 install_whisperx.sh 建立的虛擬環境
+
+entry_point: lecture_pipeline.handle_audio_message
+
+# ============================================================
+# Telegram Handler 虛擬碼 (供 OpenClaw 主框架參考)
+# ============================================================
+#
+# async def on_audio_received(update, context):
+#     """OpenClaw Telegram handler 接到音訊時的處理"""
+#     
+#     # 1. 下載音訊檔
+#     file = await update.message.audio or update.message.voice
+#     audio_path = f"/tmp/openclaw_audio_{file.file_id}.ogg"
+#     tg_file = await context.bot.get_file(file.file_id)
+#     await tg_file.download_to_drive(audio_path)
+#     
+#     # 2. 取得錄音時間 (用訊息發送時間)
+#     recording_time = update.message.date
+#     
+#     # 3. 定義 Telegram 互動 callback
+#     chat_id = update.effective_chat.id
+#     
+#     async def send_message(text):
+#         await context.bot.send_message(chat_id=chat_id, text=text)
+#     
+#     async def ask_user(question):
+#         await context.bot.send_message(chat_id=chat_id, text=question)
+#         # 等待使用者回覆 (需搭配 ConversationHandler 或 event loop)
+#         reply = await wait_for_reply(chat_id, timeout=300)
+#         return reply
+#     
+#     # 4. 執行 pipeline
+#     from lecture_pipeline import handle_audio_message
+#     await handle_audio_message(audio_path, send_message, ask_user, recording_time)
+#     
+#     # 5. 清理暫存
+#     os.remove(audio_path)
