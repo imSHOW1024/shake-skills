@@ -1,17 +1,13 @@
-# lecture-transcribe skill dependencies
-# (PyTorch + WhisperX 由 install_whisperx.sh 安裝，這裡列額外依賴)
+# lecture-transcribe v3 依賴
+# 主力/備援引擎由 install_whisperx.sh 管理
 
-# Notion API
 notion-client>=2.2.0
-
-# Config
 pyyaml>=6.0
-
-# HuggingFace Hub (pyannote 認證)
 huggingface-hub>=0.20.0
 
-# (以下已由 install_whisperx.sh 涵蓋，列出供參考)
-# whisperx
-# torch
-# torchaudio
-# pyannote.audio
+# install_whisperx.sh 鎖定版本:
+# mlx-whisper
+# torch==2.2.2
+# torchaudio==2.2.2
+# whisperx==3.1.1
+# pyannote.audio==3.1.1
