@@ -36,8 +36,16 @@ CONFIG = {
 
 def transcribe_audio(
     audio_path: str,
+    progress_cb: Optional[Callable] = None,
     progress_callback: Optional[Callable] = None,
 ) -> dict:
+    """Transcribe audio with engine fallback.
+
+    `progress_cb` is the preferred arg name (used by lecture_pipeline.py).
+    `progress_callback` is kept for backward compatibility.
+    """
+    if progress_cb is None:
+        progress_cb = progress_callback
     engines = [
         ("mlx-whisper", _transcribe_mlx),
         ("whisperx", _transcribe_whisperx),
@@ -47,22 +55,22 @@ def transcribe_audio(
     last_error = None
     for name, fn in engines:
         try:
-            if progress_callback:
-                progress_callback(f"🔄 嘗試 {name}...")
+            if progress_cb:
+                progress_cb(f"🔄 嘗試 {name}...")
             t0 = time.time()
             result = fn(audio_path)
             elapsed = time.time() - t0
             result["engine_used"] = name
             result["transcribe_time_sec"] = elapsed
             logger.info(f"{name} OK ({elapsed:.1f}s)")
-            if progress_callback:
-                progress_callback(f"✅ {name} 完成 ({elapsed:.0f}s)")
+            if progress_cb:
+                progress_cb(f"✅ {name} 完成 ({elapsed:.0f}s)")
             return result
         except Exception as e:
             last_error = e
             logger.warning(f"{name} 失敗: {e}")
-            if progress_callback:
-                progress_callback(f"⚠️ {name} 失敗，嘗試下一個...")
+            if progress_cb:
+                progress_cb(f"⚠️ {name} 失敗，嘗試下一個...")
 
     raise RuntimeError(f"所有引擎失敗: {last_error}")
 
@@ -123,6 +131,41 @@ def _transcribe_openai_cli(audio_path: str) -> dict:
     }
 
 
+
+
+# ============================================================
+# 音訊資訊
+# ============================================================
+
+def get_audio_duration(audio_path: str) -> float:
+    """Return audio duration in seconds using ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        audio_path,
+    ]
+    out = subprocess.check_output(cmd, text=True).strip()
+    try:
+        return float(out)
+    except Exception:
+        return 0.0
+
+
+def get_speaker_preview(speakers: dict, top_n: int = 6) -> str:
+    """Build a short preview string for speaker mapping UI."""
+    if not speakers:
+        return "(no speakers)"
+    total = sum(v.get("duration_sec", 0) for v in speakers.values()) or 0.0
+    items = sorted(speakers.items(), key=lambda kv: kv[1].get("duration_sec", 0), reverse=True)
+    lines = []
+    for spk, info in items[:top_n]:
+        dur = info.get("duration_sec", 0)
+        pct = (dur / total * 100) if total else 0
+        lines.append(f"  {spk}: {dur/60:.1f}min ({pct:.0f}%)")
+    if len(items) > top_n:
+        lines.append(f"  ... +{len(items)-top_n} more")
+    return "\n".join(lines)
 # ============================================================
 # Diarization (獨立)
 # ============================================================
@@ -130,8 +173,15 @@ def _transcribe_openai_cli(audio_path: str) -> dict:
 def run_diarization(
     audio_path: str,
     segments: list,
+    progress_cb: Optional[Callable] = None,
     progress_callback: Optional[Callable] = None,
 ) -> tuple:
+    """Return: (updated_segments, speakers_summary).
+
+    `progress_cb` is preferred; `progress_callback` kept for backward compat.
+    """
+    if progress_cb is None:
+        progress_cb = progress_callback
     """回傳: (updated_segments, speakers_summary)"""
     hf_token = os.environ.get("HF_TOKEN", "")
     if not hf_token:
@@ -139,8 +189,8 @@ def run_diarization(
         return segments, {}
 
     try:
-        if progress_callback:
-            progress_callback("🎤 執行說話者辨識...")
+        if progress_cb:
+            progress_cb("🎤 執行說話者辨識...")
 
         from pyannote.audio import Pipeline as PyannotePipeline
         t0 = time.time()
@@ -174,15 +224,15 @@ def run_diarization(
                 stats[spk]["is_main_speaker"] = (spk == main)
                 stats[spk]["role"] = "主講者(推測)" if spk == main else "其他"
 
-        if progress_callback:
-            progress_callback(f"✅ 說話者辨識完成 ({elapsed:.0f}s, {len(stats)} 人)")
+        if progress_cb:
+            progress_cb(f"✅ 說話者辨識完成 ({elapsed:.0f}s, {len(stats)} 人)")
 
         return segments, stats
 
     except Exception as e:
         logger.warning(f"Diarization 失敗: {e}")
-        if progress_callback:
-            progress_callback(f"⚠️ 說話者辨識失敗: {e}")
+        if progress_cb:
+            progress_cb(f"⚠️ 說話者辨識失敗: {e}")
         return segments, {}
 
 

@@ -241,3 +241,19 @@ def _quote_block(text):
 
 def _rich_segs(text):
     return [{"type": "text", "text": {"content": text[i:i+2000]}} for i in range(0, max(len(text), 1), 2000)]
+
+
+# ============================================================
+# Public wrappers (backward compat)
+# ============================================================
+
+def upload_emba(metadata, summary, transcript_text, duration_sec):
+    """Wrapper for lecture_pipeline compatibility."""
+    tx = duration_sec if isinstance(duration_sec, dict) else {"duration_sec": duration_sec}
+    return _upload_emba(metadata, summary, transcript_text, tx)
+
+
+def upload_business(metadata, summary, transcript_text, duration_sec):
+    """Wrapper for lecture_pipeline compatibility."""
+    tx = duration_sec if isinstance(duration_sec, dict) else {"duration_sec": duration_sec}
+    return _upload_business(metadata, summary, transcript_text, tx)
