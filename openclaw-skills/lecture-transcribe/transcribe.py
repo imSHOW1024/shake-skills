@@ -166,6 +166,20 @@ def get_speaker_preview(speakers: dict, top_n: int = 6) -> str:
     if len(items) > top_n:
         lines.append(f"  ... +{len(items)-top_n} more")
     return "\n".join(lines)
+
+
+def _to_wav_for_pyannote(audio_path: str) -> str:
+    """Convert input audio to a temporary mono 16k WAV for pyannote/torchaudio."""
+    out = Path(tempfile.mktemp(suffix='.wav', prefix='pyannote_'))
+    cmd = [
+        'ffmpeg', '-hide_banner', '-loglevel', 'error',
+        '-i', audio_path,
+        '-ac', '1', '-ar', '16000',
+        str(out), '-y'
+    ]
+    subprocess.run(cmd, check=True)
+    return str(out)
+
 # ============================================================
 # Diarization (獨立)
 # ============================================================
@@ -188,6 +202,25 @@ def run_diarization(
         logger.warning("HF_TOKEN 未設定，跳過 diarization")
         return segments, {}
 
+    # Periodic progress heartbeat (avoid Telegram silence/timeouts)
+    diarization_heartbeat_stop = None
+    if progress_cb:
+        import threading
+        _hb_stop = threading.Event()
+        def _hb():
+            t0 = time.time()
+            # first ping after 120s, then every 180s
+            if not _hb_stop.wait(120):
+                while not _hb_stop.is_set():
+                    elapsed_min = int((time.time() - t0) / 60)
+                    try:
+                        progress_cb(f"🎤 Diarization 進行中…（{elapsed_min} 分）")
+                    except Exception:
+                        pass
+                    _hb_stop.wait(180)
+        threading.Thread(target=_hb, daemon=True).start()
+        diarization_heartbeat_stop = _hb_stop
+
     try:
         if progress_cb:
             progress_cb("🎤 執行說話者辨識...")
@@ -197,8 +230,13 @@ def run_diarization(
         pipe = PyannotePipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1", use_auth_token=hf_token,
         )
-        dia = pipe(audio_path)
+        wav_path = _to_wav_for_pyannote(audio_path)
+        dia = pipe(wav_path)
         elapsed = time.time() - t0
+        try:
+            os.unlink(wav_path)
+        except Exception:
+            pass
 
         # Merge diarization → segments
         timeline = [(t.start, t.end, s) for t, _, s in dia.itertracks(yield_label=True)]
@@ -227,12 +265,16 @@ def run_diarization(
         if progress_cb:
             progress_cb(f"✅ 說話者辨識完成 ({elapsed:.0f}s, {len(stats)} 人)")
 
+        if diarization_heartbeat_stop is not None:
+            diarization_heartbeat_stop.set()
         return segments, stats
 
     except Exception as e:
         logger.warning(f"Diarization 失敗: {e}")
         if progress_cb:
             progress_cb(f"⚠️ 說話者辨識失敗: {e}")
+        if diarization_heartbeat_stop is not None:
+            diarization_heartbeat_stop.set()
         return segments, {}
 
 
