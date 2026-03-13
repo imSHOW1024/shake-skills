@@ -22,8 +22,8 @@ CONFIG = {
     "mlx_whisper": {"model": "large-v3"},
     "whisperx": {
         "model_size": "large-v3",
-        "device": "cpu",
-        "compute_type": "int8",
+        "device": "mps",
+        "compute_type": "float16",
         "batch_size": 8,
         "language": None,
     },
@@ -34,6 +34,23 @@ CONFIG = {
 # ============================================================
 # 轉錄 (三層 Fallback)
 # ============================================================
+
+def _preprocess_audio(audio_path: str) -> str:
+    """Preprocess audio with ffmpeg (16kHz mono WAV + loudnorm)."""
+    out = Path(tempfile.mktemp(suffix='.wav', prefix='prep_'))
+    cmd = [
+        'ffmpeg', '-hide_banner', '-loglevel', 'error',
+        '-i', audio_path,
+        '-af', 'loudnorm',
+        '-ac', '1', '-ar', '16000',
+        str(out), '-y'
+    ]
+    try:
+        subprocess.run(cmd, check=True)
+        return str(out)
+    except Exception as e:
+        logger.warning(f"預處理失敗，使用原始檔案: {e}")
+        return audio_path
 
 def transcribe_audio(
     audio_path: str,
@@ -47,6 +64,11 @@ def transcribe_audio(
     """
     if progress_cb is None:
         progress_cb = progress_callback
+        
+    if progress_cb:
+        progress_cb("⚙️ 預處理音檔...")
+    prep_path = _preprocess_audio(audio_path)
+
     engines = [
         ("mlx-whisper", _transcribe_mlx),
         ("whisperx", _transcribe_whisperx),
@@ -59,19 +81,33 @@ def transcribe_audio(
             if progress_cb:
                 progress_cb(f"🔄 嘗試 {name}...")
             t0 = time.time()
-            result = fn(audio_path)
+            result = fn(prep_path)
+            
+            # fallback 條件補強: 攔截空字串、空 segments、None 結果
+            if not result or not result.get("segments") or not any(s.get("text", "").strip() for s in result.get("segments")):
+                raise ValueError("轉錄結果為空 (無 segments 或字串)")
+                
             elapsed = time.time() - t0
             result["engine_used"] = name
             result["transcribe_time_sec"] = elapsed
             logger.info(f"{name} OK ({elapsed:.1f}s)")
             if progress_cb:
                 progress_cb(f"✅ {name} 完成 ({elapsed:.0f}s)")
+            
+            if prep_path != audio_path:
+                try: os.unlink(prep_path)
+                except Exception: pass
+                
             return result
         except Exception as e:
             last_error = e
             logger.warning(f"{name} 失敗: {e}")
             if progress_cb:
                 progress_cb(f"⚠️ {name} 失敗，嘗試下一個...")
+
+    if prep_path != audio_path:
+        try: os.unlink(prep_path)
+        except Exception: pass
 
     raise RuntimeError(f"所有引擎失敗: {last_error}")
 
@@ -115,8 +151,10 @@ def _transcribe_whisperx(audio_path: str) -> dict:
 
 
 def _transcribe_openai_cli(audio_path: str) -> dict:
+    import torch
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
     with tempfile.TemporaryDirectory() as tmpdir:
-        cmd = ["whisper", audio_path, "--model", "medium",
+        cmd = ["whisper", audio_path, "--model", "medium", "--device", device,
                "--output_format", "json", "--output_dir", tmpdir, "--language", "zh"]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         json_files = list(Path(tmpdir).glob("*.json"))
