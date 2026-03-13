@@ -7,6 +7,7 @@ Diarization: pyannote standalone (獨立於轉錄引擎)
 """
 
 import os
+import re
 import json
 import time
 import logging
@@ -166,6 +167,166 @@ def get_speaker_preview(speakers: dict, top_n: int = 6) -> str:
     if len(items) > top_n:
         lines.append(f"  ... +{len(items)-top_n} more")
     return "\n".join(lines)
+
+
+def _clean_quote_text(t: str) -> str:
+    t = (t or "").strip()
+    # collapse whitespace
+    t = re.sub(r"\s+", " ", t)
+    # trim common leading speaker marks
+    t = re.sub(r"^(?:[-–—•]|\d+[:：])\s*", "", t)
+    return t.strip()
+
+
+_SMALLTALK_PAT = re.compile(
+    r"(哈哈|呵呵|嘿嘿|嗯+|呃+|喔+|哦+|欸+|啊+|對+|好+|ok|okay|謝謝|沒事|先這樣|晚點|掰|拜拜|早安|午安|晚安)",
+    re.IGNORECASE,
+)
+
+
+def _is_low_signal_segment_text(t: str) -> bool:
+    """Heuristic: segment is too short / too filler / too little content."""
+    t = _clean_quote_text(t)
+    if not t:
+        return True
+    # too short
+    if len(t) < 12:
+        return True
+    # mostly smalltalk/filler
+    if len(t) < 30 and _SMALLTALK_PAT.search(t):
+        return True
+    # very low CJK/alpha ratio
+    content_chars = sum(1 for ch in t if ("\u4e00" <= ch <= "\u9fff") or ch.isalpha() or ch.isdigit())
+    if content_chars / max(1, len(t)) < 0.35:
+        return True
+    return False
+
+
+def build_speaker_quotes(
+    segments: list,
+    speakers: dict,
+    top_n: int = 3,
+    gap_merge_sec: float = 0.8,
+) -> dict:
+    """Return per-speaker representative quotes.
+
+    Output: {
+      spk: {
+        "quotes": [{"start": float, "end": float, "text": str}, ...],
+        "stats": {...}
+      }
+    }
+    """
+    by_spk = {}
+    for seg in segments or []:
+        spk = seg.get("speaker") or "UNKNOWN"
+        text = seg.get("text") or ""
+        by_spk.setdefault(spk, []).append({
+            "start": float(seg.get("start", 0) or 0),
+            "end": float(seg.get("end", 0) or 0),
+            "text": text,
+        })
+
+    # merge adjacent segments for each speaker to avoid too-fragmented quotes
+    merged = {}
+    for spk, items in by_spk.items():
+        items = sorted(items, key=lambda x: x["start"])
+        buf = []
+        cur = None
+        for it in items:
+            t = _clean_quote_text(it["text"])
+            if cur is None:
+                cur = {"start": it["start"], "end": it["end"], "text": t}
+                continue
+            if it["start"] - cur["end"] <= gap_merge_sec:
+                # merge
+                cur["end"] = max(cur["end"], it["end"])
+                if t:
+                    cur["text"] = (cur["text"] + " " + t).strip() if cur["text"] else t
+            else:
+                buf.append(cur)
+                cur = {"start": it["start"], "end": it["end"], "text": t}
+        if cur is not None:
+            buf.append(cur)
+        merged[spk] = buf
+
+    out = {}
+    for spk, items in merged.items():
+        # compute stats
+        total_chars = sum(len(_clean_quote_text(x.get("text", ""))) for x in items)
+        good_items = [x for x in items if not _is_low_signal_segment_text(x.get("text", ""))]
+        good_chars = sum(len(_clean_quote_text(x.get("text", ""))) for x in good_items)
+
+        # pick top quotes by length (good first, then fallback)
+        pool = good_items if good_items else items
+        pool = sorted(pool, key=lambda x: len(_clean_quote_text(x.get("text", ""))), reverse=True)
+        quotes = []
+        for x in pool:
+            txt = _clean_quote_text(x.get("text", ""))
+            if not txt:
+                continue
+            quotes.append({"start": x["start"], "end": x["end"], "text": txt})
+            if len(quotes) >= top_n:
+                break
+
+        info = (speakers or {}).get(spk, {})
+        out[spk] = {
+            "quotes": quotes,
+            "stats": {
+                "duration_sec": float(info.get("duration_sec", 0) or 0),
+                "segment_count": int(info.get("segment_count", 0) or 0),
+                "total_chars": int(total_chars),
+                "good_chars": int(good_chars),
+            },
+        }
+
+    return out
+
+
+def filter_non_topic_speakers(
+    speakers: dict,
+    quotes_by_speaker: dict,
+    min_pct: float = 0.06,
+    min_duration_sec: float = 60.0,
+    min_total_chars: int = 120,
+    min_good_chars: int = 80,
+) -> tuple[list, list]:
+    """Heuristic filter for speakers who are likely off-topic / low-signal.
+
+    Returns: (kept_speakers, ignored_speakers)
+    """
+    if not speakers:
+        return [], []
+
+    total_dur = sum(float(v.get("duration_sec", 0) or 0) for v in speakers.values()) or 0.0
+    items = sorted(speakers.keys(), key=lambda s: speakers[s].get("duration_sec", 0), reverse=True)
+
+    kept, ignored = [], []
+    for spk in items:
+        dur = float(speakers[spk].get("duration_sec", 0) or 0)
+        pct = (dur / total_dur) if total_dur else 0.0
+        q = (quotes_by_speaker or {}).get(spk, {})
+        st = q.get("stats", {})
+        total_chars = int(st.get("total_chars", 0) or 0)
+        good_chars = int(st.get("good_chars", 0) or 0)
+
+        # Main speaker should almost never be dropped
+        if speakers[spk].get("is_main_speaker"):
+            kept.append(spk)
+            continue
+
+        # low talk volume
+        low_volume = (dur < min_duration_sec) or (pct < min_pct)
+
+        # fragmented / unclear content
+        low_content = (total_chars < min_total_chars) or (good_chars < min_good_chars)
+
+        if low_volume and low_content:
+            ignored.append(spk)
+        else:
+            kept.append(spk)
+
+    return kept, ignored
 
 
 def _to_wav_for_pyannote(audio_path: str) -> str:

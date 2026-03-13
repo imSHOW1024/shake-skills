@@ -1,23 +1,26 @@
 name: lecture-transcribe
-version: "3.0.1"
+version: "3.3.2"
 description: |
-  錄音 → 摘要 → Notion 自動化 Pipeline
+  錄音/雲端連結 → 逐字稿 → 分段整理 → 整合摘要 → Notion + Telegram(DOCX) Pipeline
   支援: EMBA 課堂 / 商務會談 (小型/中型/大型跨部門)
+  來源: Telegram/Discord 直接音訊、或 Google Drive / OneDrive 公開分享連結（mp3/m4a 等常見格式）
   轉錄: mlx-whisper (主) → WhisperX (備) → openai-whisper (兜底)
   Diarization: pyannote standalone
   摘要: LLM (Claude/GPT/Gemini, 可指定)
 
 trigger:
-  type: telegram_audio
-  file_types:
-    - audio/mpeg
-    - audio/mp4
-    - audio/ogg
-    - audio/wav
-    - audio/flac
-    - audio/x-m4a
-    - video/mp4
-  multi_file_window_sec: 600
+  - type: telegram_audio
+    file_types:
+      - audio/mpeg
+      - audio/mp4
+      - audio/ogg
+      - audio/wav
+      - audio/flac
+      - audio/x-m4a
+      - video/mp4
+    multi_file_window_sec: 600
+  - type: telegram_message
+  - type: discord_message
 
 env_required:
   - NOTION_API_KEY
@@ -27,7 +30,7 @@ env_optional:
   - TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD
 
 python_env: ~/whisperx-env
-entry_point: lecture_pipeline.handle_audio_message
+entry_point: lecture_pipeline.handle_message
 
 files:
   - lecture_pipeline.py

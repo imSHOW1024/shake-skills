@@ -80,6 +80,41 @@ def _fmt_dur(sec):
     return f"{h}h {m:02d}m {s:02d}s" if h else f"{m}m {s:02d}s"
 
 
+def _infer_tw_semester(date_str: str) -> str:
+    """Infer Taiwan/ROC-style semester label like '114-2' from ISO date.
+
+    Assumptions (common university schedule):
+      - Academic year starts in Aug.
+      - Term 1: Aug–Jan
+      - Term 2: Feb–Jul
+      - Year is ROC year (Gregorian year - 1911) of the *academic year*.
+
+    Examples:
+      - 2026-03-13 -> 114-2 (AY 2025/2026, spring)
+      - 2026-10-01 -> 115-1 (AY 2026/2027, fall)
+    """
+    if not (date_str or '').strip():
+        return ''
+    try:
+        d = __import__('datetime').datetime.strptime(date_str.strip(), '%Y-%m-%d').date()
+    except Exception:
+        return ''
+
+    # Academic year label
+    if d.month >= 8:
+        ay_gregorian = d.year
+        term = 1
+    elif d.month == 1:
+        ay_gregorian = d.year - 1
+        term = 1
+    else:  # Feb–Jul
+        ay_gregorian = d.year - 1
+        term = 2
+
+    roc_year = ay_gregorian - 1911
+    return f"{roc_year}-{term}"
+
+
 # ============================================================
 # EMBA
 # ============================================================
@@ -110,11 +145,15 @@ def _upload_emba(metadata, summary, transcript_text, transcription):
     if "關鍵字" in schema and metadata.get("keywords"):
         props["關鍵字"] = {"multi_select": [{"name": kw} for kw in metadata["keywords"]]}
     if "學期" in schema:
-        props["學期"] = {"select": {"name": "114-2"}}
+        sem = _infer_tw_semester(date)
+        if sem:
+            props["學期"] = {"select": {"name": sem }}
 
     children = _md_to_blocks(summary)
-    children.extend(_transcript_toggle_blocks(transcript_text))
     return _create_page(notion, db_id, props, children)
+
+
+# ============================================================
 
 
 # ============================================================
@@ -159,8 +198,8 @@ def _upload_business(metadata, summary, transcript_text, transcription):
     if "錄音長度" in schema:
         props["錄音長度"] = _rich_text_prop(_fmt_dur(duration))
 
-    children = _md_to_blocks(summary)
-    children.extend(_transcript_toggle_blocks(transcript_text))
+    children = _business_report_blocks(metadata)
+    children.extend(_md_to_blocks(summary))
     return _create_page(notion, db_id, props, children)
 
 
@@ -172,6 +211,64 @@ def _extract_action_items(summary: str) -> str:
             clean = s.replace("- [ ] ", "").replace("- [x] ", "✅ ")
             lines.append(clean)
     return "\n".join(lines)
+
+
+# ============================================================
+# Business report block (for weekly sales meeting)
+# ============================================================
+
+def _business_report_blocks(metadata) -> list:
+    """Append a copy-ready Markdown template as a Notion code block.
+
+    Only the summary lines inside the code block should be numbered list:
+      1. ...
+      2. ...
+    The full page content below the code block is rendered from the main summary template (A/B/C).
+    """
+    title = '## 業務會報版：'
+    meeting = metadata.get('meeting_name') or metadata.get('course_name') or ''
+    date = metadata.get('date', '')
+    location = metadata.get('location', '')
+    people = ''
+    if metadata.get('participants'):
+        people = ', '.join(metadata.get('participants') or [])
+    elif metadata.get('attendees'):
+        people = ', '.join(metadata.get('attendees') or [])
+
+    report_lines = metadata.get('report_lines') or []
+
+    # Ensure we only keep numbered bullet lines; do NOT inject placeholders.
+    numbered = []
+    for ln in report_lines:
+        s = (ln or '').strip()
+        if re.match(r'^\d+\.', s):
+            numbered.append(s)
+
+    if not numbered:
+        numbered = ['1. （此處將自動填入摘要重點；若為空表示摘要模板未產出「業務會報版摘要」段落）']
+
+    md = "\n".join([
+        title,
+        f"- 主題：{meeting}",
+        f"- 日期：{date}",
+        f"- 地點：{location}",
+        f"- 人員：{people}",
+        '- 摘要：',
+        *('  ' + s for s in numbered),
+    ])
+
+    return [
+        {"object": "block", "type": "divider", "divider": {}},
+        _heading_block(2, '業務會報版（可一鍵複製）'),
+        {
+            "object": "block",
+            "type": "code",
+            "code": {
+                "language": "markdown",
+                "rich_text": [{"type": "text", "text": {"content": md[:2000]}}],
+            },
+        },
+    ]
 
 
 # ============================================================
@@ -207,6 +304,10 @@ def _transcript_toggle_blocks(transcript_text: str) -> list:
     We split long transcripts into multiple toggle headings, each containing
     <= 100 paragraph children.
     """
+    # If no transcript, do not add placeholder blocks
+    if not (transcript_text or "").strip():
+        return []
+
     blocks = [{"object": "block", "type": "divider", "divider": {}}]
 
     lines = [ln.strip() for ln in transcript_text.split("\n") if ln.strip()]
@@ -297,20 +398,25 @@ def _md_to_blocks(md: str) -> list:
     """Convert markdown-ish text to Notion blocks.
 
     Supports headings, lists, quotes, dividers, todo, and **Markdown pipe tables**.
+    Also supports 1-level nested bullets via 2-space indent: `  - item`.
+
     Pipe tables are converted into real Notion `table` blocks so columns align.
     """
     blocks = []
     lines = md.split("\n")
     i = 0
+
+    last_list_block = None  # last top-level bullet/todo block to attach indented children
+
     while i < len(lines):
         raw = lines[i]
-        s = raw.strip()
-        if not s:
+        s = raw.rstrip("\n")
+        if not s.strip():
             i += 1
             continue
 
         # ---- Markdown pipe table ----
-        if _is_md_table_row(s) and i + 1 < len(lines) and _is_md_table_separator(lines[i + 1]):
+        if _is_md_table_row(s.strip()) and i + 1 < len(lines) and _is_md_table_separator(lines[i + 1]):
             header = _split_md_table_row(lines[i])
             i += 2  # skip header + separator
             body = []
@@ -319,8 +425,6 @@ def _md_to_blocks(md: str) -> list:
                 i += 1
             table_rows = [header] + body
 
-            # Notion has practical limits; keep it safe.
-            # If a table is huge, split into multiple tables.
             max_rows = 80
             if len(table_rows) <= max_rows:
                 blocks.append(_table_block(table_rows, has_header=True))
@@ -328,31 +432,59 @@ def _md_to_blocks(md: str) -> list:
                 blocks.append(_heading_block(3, "表格（分段）"))
                 for k in range(0, len(table_rows), max_rows):
                     chunk = table_rows[k:k+max_rows]
-                    # ensure each chunk has a header
                     if chunk and chunk[0] != header:
                         chunk = [header] + chunk
                     blocks.append(_table_block(chunk, has_header=True))
+            last_list_block = None
+            continue
+
+        st = s.strip()
+
+        # ---- nested list (2-space indent) ----
+        if s.startswith("  - " ) and last_list_block is not None:
+            child = _bullet_block(st[2:])
+            # attach as child
+            if last_list_block.get('type') == 'bulleted_list_item':
+                last_list_block['bulleted_list_item'].setdefault('children', []).append(child)
+            elif last_list_block.get('type') == 'to_do':
+                last_list_block['to_do'].setdefault('children', []).append(child)
+            else:
+                # fallback: treat as top-level
+                blocks.append(child)
+            i += 1
             continue
 
         # ---- normal markdown-ish lines ----
-        if s.startswith("### "):
-            blocks.append(_heading_block(3, s[4:]))
-        elif s.startswith("## "):
-            blocks.append(_heading_block(2, s[3:]))
-        elif s.startswith("# "):
-            blocks.append(_heading_block(1, s[2:]))
-        elif s == "---":
+        if st.startswith("### " ):
+            blocks.append(_heading_block(3, st[4:]))
+            last_list_block = None
+        elif st.startswith("## " ):
+            blocks.append(_heading_block(2, st[3:]))
+            last_list_block = None
+        elif st.startswith("# " ):
+            blocks.append(_heading_block(1, st[2:]))
+            last_list_block = None
+        elif st == "---":
             blocks.append({"object": "block", "type": "divider", "divider": {}})
-        elif s.startswith("- [ ] "):
-            blocks.append(_todo_block(s[6:], False))
-        elif s.startswith("- [x] "):
-            blocks.append(_todo_block(s[6:], True))
-        elif s.startswith("- "):
-            blocks.append(_bullet_block(s[2:]))
-        elif s.startswith("> "):
-            blocks.append(_quote_block(s[2:]))
+            last_list_block = None
+        elif st.startswith("- [ ] " ):
+            b = _todo_block(st[6:], False)
+            blocks.append(b)
+            last_list_block = b
+        elif st.startswith("- [x] " ):
+            b = _todo_block(st[6:], True)
+            blocks.append(b)
+            last_list_block = b
+        elif st.startswith("- " ):
+            b = _bullet_block(st[2:])
+            blocks.append(b)
+            last_list_block = b
+        elif st.startswith("> " ):
+            blocks.append(_quote_block(st[2:]))
+            last_list_block = None
         else:
-            blocks.append(_paragraph_block(s))
+            blocks.append(_paragraph_block(st))
+            last_list_block = None
         i += 1
 
     return blocks
