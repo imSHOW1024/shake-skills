@@ -1,0 +1,46 @@
+# profiles/pc3095-company.yml
+# 裝置：PC3095
+# 角色：公司用 Windows PC，權限受限
+# ─────────────────────────────────────────────────────────────
+
+device: pc3095-company
+description: "PC3095 — Win11 16G，公司環境，無系統管理員權限"
+
+platforms:
+  - universal
+  - claude-code
+  - cursor
+  - antigravity
+
+# 明確排除
+exclude:
+  # openclaw 相關
+  - lme-monitor
+  - lme-browser-eval
+  - openclaw-tavily-search
+  - free-ride
+  - find-skills
+  - gog
+  - memory-lancedb-pro-skill
+  # 個人資料類（不適合公司環境）
+  - wardrobe-obsidian
+  - hbr-taiwan-obsidian-import
+  - emba-pptx
+  - lecture-transcribe
+  # 需要 Python / Node 環境安裝的（需 IT 協助才能更新）
+  - pdf-vlm-ocr       # 需 Python + VLM 依賴
+  - brave-search      # 需 npm install
+  - diagram-generator # 需 npm install
+  - pdf-text-extractor  # 需 npm install
+
+constraints:
+  - 無系統管理員權限，軟體更新需請 IT 遠端協助
+  - 優先使用純 prompt/context skill，避免需要 runtime 安裝的 skill
+  - 不存放個人私有資料（衣櫥、EMBA、HBR 等）
+
+notes: |
+  公司 PC 安裝流程（受限環境）：
+    1. git clone https://github.com/imSHOW1024/shake-skills
+    2. 只安裝 universal + claude-code 中「不需 runtime」的 skill
+    3. 有 package.json / requirements.txt 的 skill 安裝前先確認 IT 已裝好環境
+    4. 需要更新 Node / Python 時請 IT 遠端協助

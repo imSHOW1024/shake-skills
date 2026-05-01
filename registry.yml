@@ -8,6 +8,8 @@
 #   openclaw     → 依賴 openclaw runtime / browser profile
 #   cursor       → Cursor IDE 內使用
 #   codex        → OpenAI Codex CLI
+#   antigravity  → Antigravity（公司 PC 主力工具）
+#   hermes       → Hermes Agent
 #
 # source 欄位說明：
 #   clawhub  → 從 clawhub 安裝（clawhub install <slug>）
