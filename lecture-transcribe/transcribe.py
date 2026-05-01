@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 transcribe.py — 轉錄引擎 + Diarization + 音訊處理
 
@@ -6,6 +8,16 @@ Diarization: pyannote standalone (獨立於轉錄引擎)
 音訊處理: ffmpeg 切割 / 合併
 """
 
+# ── PyTorch 2.6+ weights_only fix（必須在所有 torch/whisperx import 之前）──
+# PyTorch 2.6 把 torch.load weights_only 預設改為 True，導致 pyannote 模型載入失敗。
+# pyannote 模型來自 Hugging Face，屬可信來源。使用 torch 官方環境變數解法。
+# skill.yaml env_defaults 應自動設定此值；這裡做一層保底。
+import os as _os_for_torch_patch
+if not _os_for_torch_patch.environ.get('TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD'):
+    _os_for_torch_patch.environ['TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD'] = '1'
+
+import gc
+import hashlib
 import os
 import re
 import json
@@ -52,19 +64,70 @@ def _preprocess_audio(audio_path: str) -> str:
         logger.warning(f"預處理失敗，使用原始檔案: {e}")
         return audio_path
 
+def _detect_silence(audio_path: str, threshold_db: float = -40, min_silence_pct: float = 0.8) -> bool:
+    """Return True if audio is mostly silent (> min_silence_pct of duration).
+
+    Uses ffmpeg silencedetect filter to measure silence duration.
+    """
+    try:
+        # Get total duration first
+        dur_cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            audio_path,
+        ]
+        dur_out = subprocess.check_output(dur_cmd, text=True, stderr=subprocess.DEVNULL).strip()
+        total_dur = float(dur_out) if dur_out else 0.0
+        if total_dur <= 0:
+            return False
+
+        # Run silencedetect
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "info",
+            "-i", audio_path,
+            "-af", f"silencedetect=noise={threshold_db}dB:d=0.5",
+            "-f", "null", "-",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        output = result.stderr or ""
+
+        # Parse silence_duration lines
+        silence_durations = re.findall(r"silence_duration:\s*([\d.]+)", output)
+        total_silence = sum(float(d) for d in silence_durations)
+
+        silence_pct = total_silence / total_dur
+        logger.debug(f"靜音檢測: {audio_path} — 靜音 {total_silence:.1f}s / {total_dur:.1f}s ({silence_pct:.0%})")
+        return silence_pct >= min_silence_pct
+
+    except Exception as e:
+        logger.warning(f"靜音檢測失敗: {e}")
+        return False
+
+
 def transcribe_audio(
     audio_path: str,
     progress_cb: Optional[Callable] = None,
     progress_callback: Optional[Callable] = None,
+    chunk_minutes: int = 30,
 ) -> dict:
     """Transcribe audio with engine fallback.
 
     `progress_cb` is the preferred arg name (used by lecture_pipeline.py).
     `progress_callback` is kept for backward compatibility.
+    `chunk_minutes`: for audio > 45 minutes, split into chunks of this size.
     """
     if progress_cb is None:
         progress_cb = progress_callback
-        
+
+    dur_sec = get_audio_duration(audio_path)
+    long_audio = dur_sec > 45 * 60
+
+    # ── Long audio: chunked transcription with per-chunk caching ──
+    if long_audio:
+        return _transcribe_chunked(audio_path, dur_sec, chunk_minutes, progress_cb)
+
+    # ── Short audio: existing behaviour ──
     if progress_cb:
         progress_cb("⚙️ 預處理音檔...")
     prep_path = _preprocess_audio(audio_path)
@@ -112,9 +175,219 @@ def transcribe_audio(
     raise RuntimeError(f"所有引擎失敗: {last_error}")
 
 
+def _transcribe_chunked(
+    audio_path: str,
+    dur_sec: float,
+    chunk_minutes: int,
+    progress_cb: Optional[Callable],
+) -> dict:
+    """Split long audio into chunks, transcribe each with per-chunk caching, then merge."""
+    if progress_cb:
+        progress_cb(f"⏳ 長音訊模式：切割為 {chunk_minutes} 分鐘段落...")
+
+    # Per-chunk cache dir
+    cache_dir = Path.home() / "whisperx-outputs" / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stable hash of the source file for cache keys
+    file_hash = hashlib.md5(f"{Path(audio_path).stem}__{Path(audio_path).stat().st_size}".encode()).hexdigest()[:12]
+
+    chunks = split_audio(audio_path, chunk_minutes=chunk_minutes)
+    total = len(chunks)
+    if progress_cb:
+        progress_cb(f"🔪 切割完成：{total} 段")
+
+    all_segments = []
+    engine_used = None
+
+    # For WhisperX (fallback only), load once before the loop.
+    # mlx-whisper is priority 1 on Apple Silicon; only load WhisperX if mlx-whisper is unavailable.
+    _whisperx_model = None
+    try:
+        import mlx_whisper as _mlx_check  # noqa: F401
+        logger.info("mlx-whisper available — skipping WhisperX preload")
+    except ImportError:
+        try:
+            import whisperx as _wx
+            cfg = CONFIG["whisperx"]
+            _whisperx_model = _wx.load_model(
+                cfg["model_size"], cfg["device"],
+                compute_type=cfg["compute_type"], language=cfg["language"],
+            )
+            logger.info("WhisperX 模型預載完成（mlx-whisper 不可用時的 fallback）")
+        except Exception as e:
+            logger.warning(f"WhisperX 模型預載失敗（將 per-chunk fallback）: {e}")
+
+    try:
+        for i, chunk_path in enumerate(chunks):
+            chunk_cache_path = cache_dir / f"chunk_{file_hash}_{i}.json"
+
+            # ── Per-chunk cache hit ──
+            if chunk_cache_path.exists():
+                try:
+                    cached = json.loads(chunk_cache_path.read_text(encoding="utf-8"))
+                    if isinstance(cached, dict) and cached.get("segments"):
+                        logger.info(f"Chunk {i} 快取命中")
+                        _merge_chunk_segments(all_segments, cached["segments"], i, chunk_minutes)
+                        if not engine_used:
+                            engine_used = cached.get("engine_used", "cached")
+                        if progress_cb:
+                            progress_cb(f"♻️ 轉錄進度：{i+1}/{total} 段（快取）")
+                        continue
+                except Exception:
+                    pass  # corrupt cache → re-transcribe
+
+            # ── Silence detection ──
+            if _detect_silence(chunk_path):
+                logger.info(f"Chunk {i} 跳過靜音段")
+                if progress_cb:
+                    progress_cb(f"🔇 轉錄進度：{i+1}/{total} 段 — 跳過靜音段")
+                # Save empty result to cache so we don't re-check next time
+                chunk_cache_path.write_text(
+                    json.dumps({"segments": [], "engine_used": "silence_skip", "duration_sec": 0}, ensure_ascii=False),
+                    encoding="utf-8"
+                )
+                continue
+
+            # ── Preprocess chunk ──
+            prep_chunk = _preprocess_audio(chunk_path)
+
+            # ── Transcribe chunk ──
+            chunk_result = None
+            last_err = None
+
+            # Priority 1: mlx-whisper (Apple Silicon GPU — fastest on M1/M2/M3)
+            try:
+                chunk_result = _transcribe_mlx(prep_chunk)
+                chunk_result["engine_used"] = "mlx-whisper"
+                if not chunk_result.get("segments") or not any(s.get("text", "").strip() for s in chunk_result["segments"]):
+                    chunk_result = None
+                    raise ValueError("mlx-whisper chunk 結果為空")
+            except Exception as e:
+                last_err = e
+                logger.warning(f"Chunk {i} mlx-whisper 失敗: {e}")
+                chunk_result = None
+
+            # Priority 2: WhisperX (fallback, model already loaded if available)
+            if chunk_result is None and _whisperx_model is not None:
+                try:
+                    import whisperx as _wx
+                    cfg = CONFIG["whisperx"]
+                    raw = _whisperx_model.transcribe(prep_chunk, batch_size=cfg["batch_size"])
+                    lang = raw.get("language", "unknown")
+                    try:
+                        model_a, meta = _wx.load_align_model(language_code=lang, device=cfg["device"])
+                        raw = _wx.align(raw["segments"], model_a, meta, prep_chunk, cfg["device"])
+                        del model_a, meta
+                        gc.collect()
+                    except Exception as ae:
+                        logger.warning(f"Chunk {i} alignment 失敗: {ae}")
+                    segs = raw.get("segments", [])
+                    chunk_result = {"segments": segs, "language": lang,
+                                    "duration_sec": segs[-1]["end"] if segs else 0,
+                                    "engine_used": "whisperx"}
+                    if not segs or not any(s.get("text", "").strip() for s in segs):
+                        chunk_result = None
+                        raise ValueError("WhisperX chunk 結果為空")
+                except Exception as e:
+                    last_err = e
+                    logger.warning(f"Chunk {i} WhisperX 失敗: {e}")
+                    chunk_result = None
+
+            # Priority 3: openai-whisper CLI (last resort)
+            if chunk_result is None:
+                try:
+                    chunk_result = _transcribe_openai_cli(prep_chunk)
+                    chunk_result["engine_used"] = "openai-whisper"
+                except Exception as e:
+                    last_err = e
+                    logger.warning(f"Chunk {i} openai-whisper 失敗: {e}")
+                    chunk_result = None
+
+            # Clean up temp preprocessed file
+            if prep_chunk != chunk_path:
+                try:
+                    os.unlink(prep_chunk)
+                except Exception:
+                    pass
+
+            if chunk_result is None:
+                logger.error(f"Chunk {i} 所有引擎失敗，跳過: {last_err}")
+                if progress_cb:
+                    progress_cb(f"⚠️ 轉錄進度：{i+1}/{total} 段 — 失敗跳過")
+                continue
+
+            # ── Cache chunk result ──
+            try:
+                chunk_cache_path.write_text(
+                    json.dumps(chunk_result, ensure_ascii=False),
+                    encoding="utf-8"
+                )
+            except Exception:
+                pass
+
+            # ── Merge with time offset ──
+            if not engine_used:
+                engine_used = chunk_result.get("engine_used", "whisperx")
+            _merge_chunk_segments(all_segments, chunk_result.get("segments", []), i, chunk_minutes)
+
+            # Memory management
+            del chunk_result
+            gc.collect()
+
+            if progress_cb:
+                progress_cb(f"🎙️ 轉錄進度：{i+1}/{total} 段完成")
+
+    finally:
+        # Delete WhisperX model after all chunks
+        if _whisperx_model is not None:
+            try:
+                del _whisperx_model
+                gc.collect()
+            except Exception:
+                pass
+
+        # Clean up chunk temp files
+        for chunk_path in chunks:
+            try:
+                os.unlink(chunk_path)
+            except Exception:
+                pass
+        # Clean up chunk temp dir
+        try:
+            chunk_dir = Path(chunks[0]).parent if chunks else None
+            if chunk_dir and chunk_dir.exists():
+                chunk_dir.rmdir()
+        except Exception:
+            pass
+
+    if not all_segments:
+        raise RuntimeError("所有 chunk 轉錄失敗，無有效 segments")
+
+    total_dur = all_segments[-1]["end"] if all_segments else dur_sec
+    return {
+        "segments": all_segments,
+        "language": "mixed",
+        "duration_sec": total_dur,
+        "engine_used": engine_used or "whisperx",
+        "transcribe_time_sec": 0,  # not tracked per-chunk
+    }
+
+
+def _merge_chunk_segments(all_segments: list, chunk_segs: list, chunk_index: int, chunk_minutes: int) -> None:
+    """Append chunk segments to all_segments with correct time offset."""
+    offset = chunk_index * chunk_minutes * 60
+    for seg in chunk_segs:
+        new_seg = dict(seg)
+        new_seg["start"] = float(seg.get("start", 0)) + offset
+        new_seg["end"] = float(seg.get("end", 0)) + offset
+        all_segments.append(new_seg)
+
+
 def _transcribe_mlx(audio_path: str) -> dict:
     import mlx_whisper
     model = CONFIG["mlx_whisper"]["model"]
+    # Do NOT pass language= so mlx-whisper auto-detects per-segment (supports CN/JP mixed)
     result = mlx_whisper.transcribe(
         audio_path,
         path_or_hf_repo=f"mlx-community/whisper-{model}-mlx",
@@ -154,8 +427,10 @@ def _transcribe_openai_cli(audio_path: str) -> dict:
     import torch
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     with tempfile.TemporaryDirectory() as tmpdir:
-        cmd = ["whisper", audio_path, "--model", "medium", "--device", device,
-               "--output_format", "json", "--output_dir", tmpdir, "--language", "zh"]
+        # Use large-v3 for better multilingual (CN/JP) performance
+        # No --language flag: let Whisper auto-detect
+        cmd = ["whisper", audio_path, "--model", "large-v3", "--device", device,
+               "--output_format", "json", "--output_dir", tmpdir]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         json_files = list(Path(tmpdir).glob("*.json"))
         if not json_files:
@@ -165,7 +440,7 @@ def _transcribe_openai_cli(audio_path: str) -> dict:
     segs = data.get("segments", [])
     return {
         "segments": segs,
-        "language": data.get("language", "zh"),
+        "language": data.get("language", "unknown"),
         "duration_sec": segs[-1]["end"] if segs else 0,
     }
 
@@ -424,11 +699,31 @@ def run_diarization(
         if progress_cb:
             progress_cb("🎤 執行說話者辨識...")
 
+        import torch
         from pyannote.audio import Pipeline as PyannotePipeline
+
+        # 選擇最佳 device：MPS (Apple Silicon) > CUDA > CPU
+        if torch.backends.mps.is_available():
+            _dia_device = torch.device("mps")
+            logger.info("Diarization device: MPS (Apple Silicon GPU)")
+        elif torch.cuda.is_available():
+            _dia_device = torch.device("cuda")
+            logger.info("Diarization device: CUDA GPU")
+        else:
+            _dia_device = torch.device("cpu")
+            logger.info("Diarization device: CPU")
+
         t0 = time.time()
         pipe = PyannotePipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1", use_auth_token=hf_token,
         )
+        try:
+            pipe = pipe.to(_dia_device)
+        except Exception as _mps_err:
+            logger.warning(f"Diarization: 無法使用 {_dia_device}，回退 CPU ({_mps_err})")
+            _dia_device = torch.device("cpu")
+            pipe = pipe.to(_dia_device)
+
         wav_path = _to_wav_for_pyannote(audio_path)
         dia = pipe(wav_path)
         elapsed = time.time() - t0

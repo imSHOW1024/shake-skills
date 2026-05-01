@@ -1,0 +1,50 @@
+name: lecture-transcribe
+version: "3.3.3"
+description: |
+  錄音/雲端連結 → 逐字稿 → 分段整理 → 整合摘要 → Notion + Obsidian Markdown 歸檔 Pipeline
+  支援: EMBA 課堂 / 商務會談 (小型/中型/大型跨部門) / 論壇演講模板 E
+  來源: Telegram/Discord 直接音訊、或 Google Drive / OneDrive 公開分享連結（mp3/m4a 等常見格式）
+  可同時接收使用者筆記/關鍵字，並在摘要生成階段直接作為高優先參考線索（與逐字稿衝突時仍以逐字稿為準）
+  支援 runtime flag `skip_notion_ai_transcript`：當 Notion 筆記含長篇 Notion AI transcript 時，預設降權為 reference，僅在原始轉錄品質過差時才啟用 fallback
+  轉錄: mlx-whisper (主) → WhisperX (備) → openai-whisper (兜底)
+  Diarization: pyannote standalone
+  摘要: LLM（預設低成本優先；chunk 預設 MiniMax，Google/Gemini fallback 需明確啟用）
+  Notion 寫入附 parent/data_source 驗證，並提供 dry-run 檢查工具避免寫錯 DB 或誤覆蓋
+
+trigger:
+  - type: telegram_audio
+    file_types:
+      - audio/mpeg
+      - audio/mp4
+      - audio/ogg
+      - audio/wav
+      - audio/flac
+      - audio/x-m4a
+      - video/mp4
+    multi_file_window_sec: 600
+  - type: telegram_message
+  - type: discord_message
+
+env_required:
+  - NOTION_API_KEY
+env_optional:
+  - HF_TOKEN
+  - ANTHROPIC_API_KEY
+  - LECTURE_TRANSCRIBE_ALLOW_GOOGLE_CHUNK_FALLBACK
+  - LECTURE_TRANSCRIBE_ALLOW_GOOGLE_FINAL_FALLBACK
+  - LECTURE_TRANSCRIBE_ALLOW_GOOGLE_DIRECT_FALLBACK
+env_defaults:
+  # PyTorch 2.6+ 把 weights_only 預設改為 True，導致 pyannote 模型載入失敗。
+  # pyannote 模型來自 Hugging Face，屬可信來源。此環境變數由 torch 官方支援。
+  TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+
+python_env: ~/whisperx-env
+entry_point: lecture_pipeline.handle_message
+
+files:
+  - lecture_pipeline.py
+  - transcribe.py
+  - summary_prompts.py
+  - notion_upload.py
+  - course_schedule.yaml
+  - scripts/notion_dry_run.py

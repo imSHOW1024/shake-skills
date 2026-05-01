@@ -1,0 +1,67 @@
+{
+  "chatgpt": {
+    "id": "2de35267-e085-8039-9893-007a6de5e865",
+    "name": "chatgpt",
+    "url": ""
+  },
+  "claude": {
+    "id": "2fc35267-e085-8069-a00b-007a9b5194b5",
+    "name": "claude",
+    "url": ""
+  },
+  "gemini-color": {
+    "id": "2de35267-e085-8037-a7e1-007a48335ae4",
+    "name": "gemini-color",
+    "url": ""
+  },
+  "lioho": {
+    "id": "2e635267-e085-80f9-86c8-007a63c1a40b",
+    "name": "lioho",
+    "url": ""
+  },
+  "manus": {
+    "id": "2de35267-e085-80a7-b79b-007a35a47e4c",
+    "name": "manus",
+    "url": ""
+  },
+  "minimax-color": {
+    "id": "33735267-e085-803c-8d1c-007a812b7fda",
+    "name": "minimax-color",
+    "url": ""
+  },
+  "notebooklm": {
+    "id": "2de35267-e085-80df-9291-007a6425ed98",
+    "name": "notebooklm",
+    "url": ""
+  },
+  "notion": {
+    "id": "2de35267-e085-8099-a2d1-007ae7f203b5",
+    "name": "notion",
+    "url": ""
+  },
+  "obsidian-color": {
+    "id": "33735267-e085-809c-9ff6-007affa4d19b",
+    "name": "obsidian-color",
+    "url": "https://s3-us-west-2.amazonaws.com/public.notion-static.com/69232775-b148-4bf4-9d2c-96a60792e899/obsidian-color.svg"
+  },
+  "openclaw": {
+    "id": "31435267-e085-8070-88fa-007abe878994",
+    "name": "openclaw",
+    "url": ""
+  },
+  "openclaw-dark": {
+    "id": "31435267-e085-80fe-9c88-007aa533a9a3",
+    "name": "openclaw-dark",
+    "url": ""
+  },
+  "teams": {
+    "id": "2e135267-e085-8065-9f29-007a2be53b5a",
+    "name": "teams",
+    "url": ""
+  },
+  "wechat": {
+    "id": "2fc35267-e085-808e-8309-007a3cedb935",
+    "name": "wechat",
+    "url": ""
+  }
+}
