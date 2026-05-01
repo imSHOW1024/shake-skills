@@ -1,0 +1,26 @@
+# profiles/openclaw-16mbp.yml
+# 裝置：16" MacBook Pro M1 Max 32G
+# 角色：openclaw 主力機，完整 skill 環境
+# ─────────────────────────────────────────────────────────────
+
+device: openclaw-16mbp
+description: "16\" MBP M1 Max 32G — openclaw 主力機"
+
+# 安裝所有平台的 skill
+platforms:
+  - universal
+  - claude-code
+  - openclaw
+
+# openclaw 專屬環境需求
+prerequisites:
+  - gog CLI          # for gog skill
+  - lancedb          # for memory-lancedb-pro-skill（本機單獨管理，不在 repo）
+  - openclaw browser # for lme-monitor, lme-browser-eval
+
+notes: |
+  memory-lancedb-pro-skill 為 openclaw plugin，單獨管理，不在此 repo。
+  安裝流程：
+    1. git clone https://github.com/imSHOW1024/shake-skills
+    2. clawhub install <slug>  # 針對 registry.yml 中 source: clawhub 的 skill
+    3. local skill 直接從 clone 目錄載入

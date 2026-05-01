@@ -1,0 +1,32 @@
+# profiles/vibe-coding-14mbp.yml
+# 裝置：14" MacBook Pro M5 Max 128G
+# 角色：vibe coding 隨身機，Claude Code / Cursor / Codex 為主
+# ─────────────────────────────────────────────────────────────
+
+device: vibe-coding-14mbp
+description: "14\" MBP M5 Max 128G — vibe coding 隨身機"
+
+# 不安裝 openclaw（openclaw 不搬到這台）
+platforms:
+  - universal
+  - claude-code
+
+# 明確排除
+exclude:
+  - lme-monitor          # openclaw runtime 依賴
+  - lme-browser-eval     # openclaw runtime 依賴
+  - openclaw-tavily-search  # openclaw 專屬
+  - free-ride            # openclaw + OpenRouter 依賴
+  - find-skills          # openclaw 環境用
+  - gog                  # openclaw + gog CLI 依賴
+  - memory-lancedb-pro-skill  # openclaw plugin，不在 repo
+
+notes: |
+  這台定位為 vibe coding 隨身機：
+  - 主力工具：Claude Code、Cursor、OpenAI Codex
+  - 不安裝 openclaw，省去相依環境的設置
+  安裝流程：
+    1. git clone https://github.com/imSHOW1024/shake-skills
+    2. 依 registry.yml，只挑 platforms 包含 universal 或 claude-code 的 skill
+    3. clawhub install <slug>  # clawhub 來源的 skill
+    4. local skill 直接從 clone 目錄載入

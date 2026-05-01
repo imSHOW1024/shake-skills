@@ -1,0 +1,212 @@
+# shake-skills / registry.yml
+# ─────────────────────────────────────────────────────────────
+# 所有 skill 的單一真相來源。
+#
+# platforms 欄位說明：
+#   universal    → 任何 AI agent 皆可使用（純 prompt / context）
+#   claude-code  → Claude Code CLI 的 SKILL.md 格式
+#   openclaw     → 依賴 openclaw runtime / browser profile
+#   cursor       → Cursor IDE 內使用
+#   codex        → OpenAI Codex CLI
+#
+# source 欄位說明：
+#   clawhub  → 從 clawhub 安裝（clawhub install <slug>）
+#   local    → 本 repo 自維護，不從 clawhub 拉
+#
+# 新裝置安裝流程：
+#   1. git clone https://github.com/imSHOW1024/shake-skills
+#   2. 依對應 profile（profiles/ 目錄）決定要裝哪些 skill
+#   3. clawhub skill → clawhub install <slug>
+#   4. local skill → 路徑直接指向 clone 目錄
+
+skills:
+
+  # ── Universal（任何 agent 皆可用）────────────────────────
+  - slug: copywriting
+    source: clawhub
+    platforms: [universal]
+
+  - slug: csv
+    source: clawhub
+    platforms: [universal]
+
+  - slug: data-analysis
+    source: clawhub
+    platforms: [universal]
+
+  - slug: summarize
+    source: clawhub
+    platforms: [universal]
+
+  - slug: social-content
+    source: clawhub
+    platforms: [universal]
+
+  - slug: product-marketing-context
+    source: clawhub
+    platforms: [universal]
+
+  - slug: multi-search-engine
+    source: clawhub
+    platforms: [universal]
+
+  - slug: notion
+    source: clawhub
+    platforms: [universal]
+
+  - slug: pdf-text-extractor
+    source: clawhub
+    platforms: [universal]
+
+  - slug: excel-xlsx
+    source: clawhub
+    platforms: [universal]
+
+  - slug: internal-comms
+    source: local
+    path: skills/internal-comms
+    platforms: [universal]
+
+  - slug: brand-guidelines
+    source: local
+    path: skills/brand-guidelines
+    platforms: [universal]
+
+  # ── Claude Code ───────────────────────────────────────────
+  - slug: diagram-generator
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: brave-search
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: model-usage
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: nano-banana-pro
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: nano-banana-2-direct
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: nano-pdf
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: skill-creator
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: skill-vetter
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: ui-ux-pro-max
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: web-search-exa
+    source: clawhub
+    platforms: [claude-code]
+
+  - slug: emba-pptx
+    source: local
+    path: skills/emba-pptx
+    platforms: [claude-code]
+    note: "EMBA 課堂報告 pptx，個人私有"
+
+  - slug: pptx
+    source: local
+    path: skills/pptx
+    platforms: [claude-code]
+
+  - slug: pdf
+    source: local
+    path: skills/pdf
+    platforms: [claude-code]
+
+  - slug: xlsx
+    source: local
+    path: skills/xlsx
+    platforms: [claude-code]
+
+  - slug: docx
+    source: local
+    path: skills/docx
+    platforms: [claude-code]
+
+  - slug: pdf-vlm-ocr
+    source: local
+    path: skills/pdf-vlm-ocr
+    platforms: [claude-code]
+
+  - slug: frontend-design
+    source: local
+    path: skills/frontend-design
+    platforms: [claude-code]
+
+  - slug: doc-coauthoring
+    source: local
+    path: skills/doc-coauthoring
+    platforms: [claude-code]
+
+  - slug: wardrobe-obsidian
+    source: local
+    path: skills/wardrobe-obsidian
+    platforms: [claude-code]
+    note: "個人衣櫥 Obsidian 資料庫管理"
+
+  - slug: hbr-taiwan-obsidian-import
+    source: local
+    path: skills/hbr-taiwan-obsidian-import
+    platforms: [claude-code]
+    note: "HBR Taiwan 文章匯入 Obsidian"
+
+  - slug: coding-dispatch
+    source: local
+    path: skills/coding-dispatch
+    platforms: [claude-code, openclaw]
+    note: "路由 coding 任務到最合適的 agent / execution path"
+
+  - slug: lecture-transcribe
+    source: local
+    path: skills/lecture-transcribe
+    platforms: [claude-code]
+    note: "課堂錄音轉文字 + Notion 上傳 pipeline"
+
+  # ── OpenClaw 專屬（依賴 openclaw runtime）────────────────
+  - slug: lme-monitor
+    source: local
+    path: skills/lme-monitor
+    platforms: [openclaw]
+    note: "LME 鋁價日線監控 pipeline，需 openclaw browser profile + SQLite"
+
+  - slug: lme-browser-eval
+    source: local
+    path: skills/lme-browser-eval
+    platforms: [openclaw]
+    note: "openclaw browser evaluate wrapper，避免 SIGTERM hang"
+
+  - slug: openclaw-tavily-search
+    source: clawhub
+    platforms: [openclaw]
+    note: "Tavily 搜尋，openclaw 環境專屬"
+
+  - slug: free-ride
+    source: local
+    path: skills/free-ride
+    platforms: [openclaw]
+    note: "OpenRouter 免費 model 自動輪替，需 openclaw"
+
+  - slug: find-skills
+    source: clawhub
+    platforms: [openclaw]
+
+  - slug: gog
+    source: clawhub
+    platforms: [openclaw]
+    note: "需另外安裝 gog CLI"
