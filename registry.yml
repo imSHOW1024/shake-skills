@@ -115,6 +115,12 @@ skills:
     source: clawhub
     platforms: [claude-code]
 
+  - slug: cycu-ilearning-dl
+    source: local
+    path: skills/cycu-ilearning-dl
+    platforms: [claude-code]
+    note: "中原大學 iLearning pdfannotator PDF 下載，含下載腳本"
+
   - slug: emba-pptx
     source: local
     path: skills/emba-pptx
